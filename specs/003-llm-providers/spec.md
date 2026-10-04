@@ -66,13 +66,28 @@ trait LlmProvider: Send + Sync {
     fn supports_streaming(&self) -> bool;
     fn supports_embeddings(&self) -> bool;
     fn supports_tool_use(&self) -> bool;  // default: false
-    fn supports_vision(&self) -> bool;
+    fn supports_vision(&self) -> bool;  // per-model; see below
     fn supports_structured_output(&self) -> bool;
     fn debug_request_json(&self, ...) -> serde_json::Value;
     fn name(&self) -> &str;
     fn last_usage(&self) -> Option<(u64, u64)>;  // (input_tokens, output_tokens)
 }
 ```
+
+`supports_vision` is a **per-model** capability, not a per-provider one: the trait signature
+is unchanged, but each implementation resolves it against the model it was configured with.
+Providers resolve it in `zeph_llm::capabilities` (per-provider tables, because model names are
+not namespaced across providers), and the resolution is **fail-closed** — an unrecognised model
+reports `false` rather than being assumed capable. `OpenAiProvider`, `OllamaProvider`,
+`ClaudeProvider` and `GeminiProvider` each also expose `with_vision(bool)`, which wins over the
+table in **both** directions, so a model released after a table was written can still be used
+and a wrong table entry can be corrected without a code change.
+
+`RouterProvider` and `TriageRouter` aggregate with `.any()`, which is correct for the question
+they answer (*could some member handle an image?*) and is deliberately left coarse. The
+per-provider guarantee lives at the dispatch site — `chat_with_tools` in
+`router/provider_impl.rs`, per spec-072 C3 — which consults each provider's own answer and
+strips Image parts for any member that reports `false`.
 
 ## AnyProvider Enum
 

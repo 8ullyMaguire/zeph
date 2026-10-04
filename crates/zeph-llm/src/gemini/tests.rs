@@ -2002,3 +2002,56 @@ fn set_thinking_level_runtime_mutates_in_place() {
     p.set_thinking_level(None);
     assert!(p.current_reasoning_effort().is_none());
 }
+
+// --- #5366: supports_vision must be per-model, not a hardcoded `true` ---
+
+#[test]
+fn supports_vision_true_for_vision_capable_gemini_model() {
+    let p = GeminiProvider::new("k".into(), "gemini-2.5-pro".into(), 1024);
+    assert!(p.supports_vision());
+}
+
+#[test]
+fn supports_vision_false_for_text_only_gemini_variant() {
+    // The bug: this returned true for every model, including flash-lite and any
+    // embedding model configured on this provider.
+    let p = GeminiProvider::new("k".into(), "gemini-2.0-flash-lite".into(), 1024);
+    assert!(!p.supports_vision());
+}
+
+#[test]
+fn supports_vision_false_for_embedding_model() {
+    let p = GeminiProvider::new("k".into(), "text-embedding-004".into(), 1024)
+        .with_embedding_model("text-embedding-004");
+    assert!(!p.supports_vision());
+}
+
+#[test]
+fn supports_vision_false_for_unknown_gemini_model() {
+    let p = GeminiProvider::new("k".into(), "not-a-real-model".into(), 1024);
+    assert!(!p.supports_vision());
+}
+
+#[test]
+fn supports_vision_override_forces_true_for_unknown_gemini_model() {
+    let p = GeminiProvider::new("k".into(), "gemini-9-pro".into(), 1024).with_vision(true);
+    assert!(p.supports_vision());
+}
+
+#[test]
+fn supports_vision_override_forces_false_for_capable_gemini_model() {
+    let p = GeminiProvider::new("k".into(), "gemini-2.5-pro".into(), 1024).with_vision(false);
+    assert!(!p.supports_vision());
+}
+
+#[test]
+fn gemini_vision_override_survives_clone() {
+    let p = GeminiProvider::new("k".into(), "gemini-9-pro".into(), 1024).with_vision(true);
+    assert!(p.clone().supports_vision());
+}
+
+#[test]
+fn gemini_debug_includes_vision_override() {
+    let p = GeminiProvider::new("k".into(), "gemini-2.5-pro".into(), 512);
+    assert!(format!("{p:?}").contains("vision_override"));
+}

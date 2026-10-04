@@ -50,6 +50,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 
+use crate::capabilities::claude_supports_vision;
 use crate::error::LlmError;
 use crate::tool_desc::build_tool_description;
 use crate::usage::UsageTracker;
@@ -141,6 +142,14 @@ pub struct ClaudeProvider {
     /// Messages API base URL. Always [`API_URL`] in production; overridable only under
     /// `#[cfg(test)]` via `with_api_url` so tests can point requests at a mock HTTP server.
     api_url: String,
+    /// Explicit vision-capability override set via [`Self::with_vision`]. Takes
+    /// precedence over the per-model table in [`crate::capabilities`], for the
+    /// same reason `OpenAiProvider` has one: a table cannot know about a model
+    /// released after it was written, and fail-closed then refuses images the
+    /// model does accept. Over-reporting is safe here — the dispatch net strips
+    /// the parts when a provider says no — so the override is the documented
+    /// escape hatch in both directions.
+    vision_override: Option<bool>,
 }
 
 impl fmt::Debug for ClaudeProvider {
@@ -180,6 +189,7 @@ impl fmt::Debug for ClaudeProvider {
             )
             .field("provider_name", &self.provider_name)
             .field("api_url", &self.api_url)
+            .field("vision_override", &self.vision_override)
             .finish()
     }
 }
@@ -209,6 +219,7 @@ impl Clone for ClaudeProvider {
             stream_limits: self.stream_limits.clone(),
             provider_name: self.provider_name.clone(),
             api_url: self.api_url.clone(),
+            vision_override: self.vision_override,
         }
     }
 }
@@ -325,6 +336,7 @@ impl ClaudeProvider {
             stream_limits: zeph_config::StreamLimits::default(),
             provider_name: "claude".to_owned(),
             api_url: API_URL.to_owned(),
+            vision_override: None,
         }
     }
 
@@ -415,9 +427,31 @@ impl ClaudeProvider {
                 disabling"
             );
             self.server_compaction = false;
-            return self;
+        } else {
+            self.server_compaction = enabled;
         }
-        self.server_compaction = enabled;
+        self
+    }
+
+    /// Force the vision-capability report, overriding the per-model table.
+    ///
+    /// The table in [`crate::capabilities`] is fail-closed, so a model released
+    /// after it was written reports `false` until someone teaches it. This is
+    /// that escape hatch, and it exists in both directions because a
+    /// `compatible`-style endpoint can front any model name at all. Mirrors
+    /// [`OpenAiProvider::with_vision`](crate::openai::OpenAiProvider::with_vision).
+    ///
+    /// ```
+    /// # use zeph_llm::provider::LlmProvider;
+    /// # use zeph_llm::claude::ClaudeProvider;
+    /// // A future model the table has not been taught:
+    /// let p = ClaudeProvider::new("k".into(), "claude-sonnet-9".into(), 4096)
+    ///     .with_vision(true);
+    /// assert!(p.supports_vision());
+    /// ```
+    #[must_use]
+    pub fn with_vision(mut self, supported: bool) -> Self {
+        self.vision_override = Some(supported);
         self
     }
 
@@ -1448,8 +1482,15 @@ impl LlmProvider for ClaudeProvider {
         }
     }
 
+    /// Per-model, not per-provider. This used to return a hardcoded `true`,
+    /// which was wrong by construction: a text-only Claude 3 model reported
+    /// vision support, so `tool_result.rs` attached Image parts to a turn the
+    /// model could not process. Fail-closed via
+    /// [`claude_supports_vision`](crate::capabilities::claude_supports_vision);
+    /// [`Self::with_vision`] overrides.
     fn supports_vision(&self) -> bool {
-        true
+        self.vision_override
+            .unwrap_or_else(|| claude_supports_vision(&self.model))
     }
 
     fn supports_tool_use(&self) -> bool {

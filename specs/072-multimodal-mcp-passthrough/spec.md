@@ -394,9 +394,15 @@ hardcoded provider or model name is introduced. Known, accepted v1 limitation: `
 is a per-provider-instance boolean, not model- or MIME-aware (e.g., Ollama returns `true` even
 for a text-only local model). §3.3 defines the router-aggregation fix (S3) that makes this
 limitation safe (never a 400/422) without requiring a per-model capability table. A per-model
-vision-capability table is a noted future extension:
+vision-capability table has since been implemented (#5366):
 
-<!-- TODO(#5366): per-model vision-capability table replaces coarse supports_vision() boolean; see specs/072 §7 -->
+The per-model vision-capability table landed in `zeph_llm::capabilities` (#5366, 2026-10-04).
+`ClaudeProvider` and `GeminiProvider` resolve `supports_vision()` per model instead of returning
+a hardcoded `true`; the table is fail-closed, so an unrecognised model reports `false`, and
+`with_vision()` on either provider overrides it in both directions. Tables are per-provider
+because model names are not namespaced across providers. `RouterProvider`/`TriageRouter` keep
+their `.any()` aggregation — correct for routing eligibility — and the per-provider guarantee
+stays in `chat_with_tools` (C3), which now consults an honest per-model answer.
 
 ---
 

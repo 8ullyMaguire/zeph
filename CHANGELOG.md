@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `zeph-llm`: `ClaudeProvider::supports_vision` and `GeminiProvider::supports_vision` are now
+  resolved per model instead of returning a hardcoded `true` (#5366). Both reported vision
+  support for every model, so `tool_result.rs` attached Image parts to turns the configured
+  model could not process — a server-side error at best, a silently degraded answer at worst.
+  Vision support now comes from a new per-provider table in `zeph_llm::capabilities`, which is
+  fail-closed: an unrecognised model reports `false` rather than guessing, matching
+  `OpenAiProvider` and `OllamaProvider`. `ClaudeProvider::with_vision` and
+  `GeminiProvider::with_vision` are new, mirroring `OpenAiProvider::with_vision`, and win over
+  the table in both directions so a model released after the table was written can still be used.
+  `RouterProvider`/`TriageRouter` aggregation is deliberately unchanged — `.any()` is correct
+  for routing eligibility, and the per-provider guarantee stays in `chat_with_tools` (spec-072
+  C3), which now has an honest per-model answer to consult. No new dependency.
 - `zeph-subagent`: added `#![recursion_limit = "256"]` to fix a CI build failure where the
   compiler's `Send` auto-trait check on the nested `spawn_agent_task -> run_agent_loop ->
   run_turn` async chain exceeded the default recursion limit, producing a `future_incompatible`

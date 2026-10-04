@@ -3251,3 +3251,54 @@ fn apply_cache_breakpoint_propagates_one_hour_ttl() {
         "breakpoint message must carry 1h TTL"
     );
 }
+
+// --- #5366: supports_vision must be per-model, not a hardcoded `true` ---
+
+#[test]
+fn supports_vision_true_for_vision_capable_claude_model() {
+    let p = ClaudeProvider::new("k".into(), "claude-sonnet-4-5-20250929".into(), 1024);
+    assert!(p.supports_vision());
+}
+
+#[test]
+fn supports_vision_false_for_text_only_claude_model() {
+    // The bug: this returned true for every model, so tool_result.rs attached
+    // Image parts to a Claude 3 turn that could not process them.
+    let p = ClaudeProvider::new("k".into(), "claude-3-5-sonnet-20241022".into(), 1024);
+    assert!(!p.supports_vision());
+}
+
+#[test]
+fn supports_vision_false_for_unknown_claude_model() {
+    // Fail-closed: an arbitrary `compatible`-style model name must not be
+    // assumed vision-capable. with_vision() is the escape hatch.
+    let p = ClaudeProvider::new("k".into(), "not-a-real-model".into(), 1024);
+    assert!(!p.supports_vision());
+}
+
+#[test]
+fn supports_vision_override_forces_true_for_unknown_model() {
+    let p = ClaudeProvider::new("k".into(), "claude-sonnet-9".into(), 1024).with_vision(true);
+    assert!(p.supports_vision());
+}
+
+#[test]
+fn supports_vision_override_forces_false_for_capable_model() {
+    // The override wins in both directions, not just toward `true`.
+    let p = ClaudeProvider::new("k".into(), "claude-opus-4".into(), 1024).with_vision(false);
+    assert!(!p.supports_vision());
+}
+
+#[test]
+fn vision_override_survives_clone() {
+    // A clone that silently dropped the override would let a router mutate one
+    // instance's capability and then dispatch to another that disagrees.
+    let p = ClaudeProvider::new("k".into(), "claude-sonnet-9".into(), 1024).with_vision(true);
+    assert!(p.clone().supports_vision());
+}
+
+#[test]
+fn debug_includes_vision_override() {
+    let p = ClaudeProvider::new("k".into(), "claude-sonnet-4".into(), 512);
+    assert!(format!("{p:?}").contains("vision_override"));
+}

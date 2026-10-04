@@ -1197,8 +1197,25 @@ mod tests {
 
     #[test]
     fn any_claude_supports_vision() {
-        let provider = AnyProvider::Claude(ClaudeProvider::new("key".into(), "model".into(), 1024));
+        // A real vision-capable model. This test previously used the literal
+        // string "model" and asserted true, which passed only because
+        // ClaudeProvider::supports_vision was a hardcoded `true` -- it asserted
+        // the #5366 bug rather than any capability. An unrecognised name is
+        // fail-closed now, so the test names a model that genuinely takes images.
+        let provider = AnyProvider::Claude(ClaudeProvider::new(
+            "key".into(),
+            "claude-sonnet-4-5-20250929".into(),
+            1024,
+        ));
         assert!(provider.supports_vision());
+    }
+
+    #[test]
+    fn any_claude_unknown_model_is_fail_closed() {
+        // The mirror of the test above, and the one that would have caught the
+        // bug: the old literal "model" reported vision. It must not.
+        let provider = AnyProvider::Claude(ClaudeProvider::new("key".into(), "model".into(), 1024));
+        assert!(!provider.supports_vision());
     }
 
     #[test]

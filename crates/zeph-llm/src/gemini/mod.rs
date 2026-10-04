@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 
+use crate::capabilities::gemini_supports_vision;
 use crate::error::LlmError;
 use crate::provider::{
     ChatResponse, ChatStream, GenerationOverrides, LlmProvider, Message, MessagePart, Role,
@@ -40,6 +41,11 @@ pub struct GeminiProvider {
     /// tracking and provider selection can distinguish between multiple configured Gemini
     /// instances (#5892).
     provider_name: String,
+    /// Explicit vision-capability override set via [`Self::with_vision`]. Takes
+    /// precedence over the per-model table in [`crate::capabilities`], for the
+    /// same reason `OpenAiProvider` has one: the table is fail-closed and cannot
+    /// know a model released after it was written.
+    vision_override: Option<bool>,
 }
 
 impl fmt::Debug for GeminiProvider {
@@ -58,6 +64,7 @@ impl fmt::Debug for GeminiProvider {
             .field("thinking_budget", &self.thinking_budget)
             .field("include_thoughts", &self.include_thoughts)
             .field("provider_name", &self.provider_name)
+            .field("vision_override", &self.vision_override)
             .finish()
     }
 }
@@ -78,6 +85,7 @@ impl Clone for GeminiProvider {
             thinking_budget: self.thinking_budget,
             include_thoughts: self.include_thoughts,
             provider_name: self.provider_name.clone(),
+            vision_override: self.vision_override,
         }
     }
 }
@@ -99,6 +107,7 @@ impl GeminiProvider {
             thinking_budget: None,
             include_thoughts: None,
             provider_name: "gemini".to_owned(),
+            vision_override: None,
         }
     }
 
@@ -212,6 +221,25 @@ impl GeminiProvider {
 
     pub fn set_status_tx(&mut self, tx: StatusTx) {
         self.status_tx = Some(tx);
+    }
+
+    /// Force the vision-capability report, overriding the per-model table.
+    ///
+    /// The table in [`crate::capabilities`] is fail-closed, so a model released
+    /// after it was written reports `false` until someone teaches it. Mirrors
+    /// [`OpenAiProvider::with_vision`](crate::openai::OpenAiProvider::with_vision).
+    ///
+    /// ```
+    /// # use zeph_llm::provider::LlmProvider;
+    /// # use zeph_llm::gemini::GeminiProvider;
+    /// let p = GeminiProvider::new("k".into(), "gemini-3.0-pro".into(), 4096)
+    ///     .with_vision(true);
+    /// assert!(p.supports_vision());
+    /// ```
+    #[must_use]
+    pub fn with_vision(mut self, supported: bool) -> Self {
+        self.vision_override = Some(supported);
+        self
     }
 
     #[must_use]
@@ -1402,8 +1430,15 @@ impl LlmProvider for GeminiProvider {
         self.embedding_model.is_some()
     }
 
+    /// Per-model, not per-provider. This used to return a hardcoded `true`, so a
+    /// text-only variant (`*-flash-lite`, or any embedding model configured on
+    /// this provider) reported vision support and `tool_result.rs` attached
+    /// Image parts the model cannot process. Fail-closed via
+    /// [`gemini_supports_vision`](crate::capabilities::gemini_supports_vision);
+    /// [`Self::with_vision`] overrides.
     fn supports_vision(&self) -> bool {
-        true
+        self.vision_override
+            .unwrap_or_else(|| gemini_supports_vision(&self.model))
     }
 
     fn supports_tool_use(&self) -> bool {
